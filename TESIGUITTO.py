@@ -2,79 +2,101 @@ import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
 
-st.set_page_config(page_title="Simulatore Dispersione", layout="wide")
-st.title("Simulatore di Dispersione Inquinanti - Modello Stabile")
+# Configurazione semplice
+st.set_page_config(page_title="Simulatore Inquinamento Urbano", layout="wide")
+st.title("Studio della Dispersione Inquinanti in Area Urbana")
 
-# --- PARAMETRI DI INPUT ---
-st.sidebar.header("Parametri Meteo e Sorgente")
+# --- SEZIONE METEOROLOGIA (Fondamentale per la tesi) ---
+st.sidebar.header("Condizioni Meteo")
 
-u = st.sidebar.slider("Velocita del vento (u) [m/s]", 0.1, 5.0, 1.0)
-D = st.sidebar.slider("Coefficiente di Diffusione (K)", 0.1, 2.0, 1.0)
+# Selettore per la stabilita dell'aria (Classi di Pasquill semplificate)
+meteo = st.sidebar.selectbox(
+    "Stato dell'Atmosfera", 
+    ["Giorno Soleggiato (Instabile)", "Cielo Coperto (Neutro)", "Notte/Inversione (Stabile)"]
+)
 
-sostanza = st.sidebar.selectbox("Inquinante", ["Gas Tossico", "NO2", "CO"])
-soglia = 0.05 if sostanza == "Gas Tossico" else 0.1 if sostanza == "NO2" else 9.0
+# Impostazione dei parametri fisici in base al meteo
+if meteo == "Giorno Soleggiato (Instabile)":
+    D_base = 1.8  # Molta dispersione
+    u_base = 1.0
+    nota = "L'aria calda sale: l'inquinante si disperde velocemente."
+elif meteo == "Cielo Coperto (Neutro)":
+    D_base = 1.0
+    u_base = 2.0
+    nota = "Condizioni medie di dispersione."
+else:
+    D_base = 0.2  # Ristagno critico
+    u_base = 0.3
+    nota = "Inversione termica: l'inquinante resta schiacciato a terra."
 
-q_rate = st.sidebar.slider("Intensita Sorgente (Q)", 10, 200, 100)
+# Slider per personalizzare i valori
+u = st.sidebar.slider("Velocità Vento (u) [m/s]", 0.1, 4.0, u_base)
+D = st.sidebar.slider("Diffusione (K)", 0.1, 2.5, D_base)
+st.sidebar.caption(nota)
 
-# --- CONFIGURAZIONE GRIGLIA E STABILITÀ ---
+# --- PARAMETRI SORGENTE E INQUINANTE ---
+st.sidebar.header("Parametri Sorgente")
+inquinante = st.sidebar.selectbox("Sostanza", ["NO2", "CO", "Gas Tossico"])
+soglia = 0.1 if inquinante == "NO2" else 9.0 if inquinante == "CO" else 0.05
+
+q_rate = st.sidebar.slider("Quantità emessa (Q)", 50, 200, 100)
+
+# --- CALCOLO NUMERICO ---
 nx, ny = 50, 50
 dx = 1.0
 
-# PROTEZIONE NUMERICA: Calcolo automatico del dt (Condizione CFL)
-# Più il vento è forte, più il tempo deve essere piccolo per non far esplodere i calcoli.
-dt = 0.5 * (dx / (u + D + 0.1)) # Fattore di sicurezza 0.5
-if dt > 0.1: dt = 0.1 # Cap massimo per fluidità
+# Calcolo automatico del passo temporale (dt) per evitare numeri impazziti (CFL)
+dt = 0.4 * (dx / (u + D + 0.1)) 
+if dt > 0.05: dt = 0.05
 
-# Generazione ostacoli
+# Creazione edifici fissi
 obstacles = np.zeros((nx, ny))
 np.random.seed(42)
 for _ in range(12):
     ox, oy = np.random.randint(20, 45), np.random.randint(10, 40)
     obstacles[ox:ox+3, oy:oy+3] = 1
 
-def esegui_simulazione():
+def start_sim():
     C = np.zeros((nx, ny))
-    grafico = st.empty()
-    testo = st.empty()
+    plot = st.empty()
+    txt = st.empty()
     
-    # Sorgente fissa
+    # Punto di rilascio
     sx, sy = 10, 25
 
-    for t in range(100):
+    for t in range(120):
         C_new = C.copy()
-        
-        # Emissione
         C_new[sx, sy] += q_rate * dt
         
-        # Calcolo ADR con protezione
+        # Formule di trasporto (Advezione + Diffusione)
         for i in range(1, nx-1):
             for j in range(1, ny-1):
                 if obstacles[i,j] == 1:
                     C_new[i,j] = 0
                     continue
                 
-                # Formule discretizzate
-                diff = D * dt * (C[i+1,j] + C[i-1,j] + C[i,j+1] + C[i,j-1] - 4*C[i,j]) / (dx**2)
-                adv = -u * dt * (C[i,j] - C[i-1,j]) / dx
+                # Calcolo della variazione (Schema Upwind e Laplaciano)
+                diff = D * dt * (C[i+1,j] + C[i-1,j] + C[i,j+1] + C[i,j-1] - 4*C[i,j])
+                adv = -u * dt * (C[i,j] - C[i-1,j])
                 
                 C_new[i,j] += diff + adv
         
-        # FILTRO DI REALTÀ: Impedisce valori negativi o infiniti
-        C = np.clip(C_new, 0, 100) 
+        # Limitatore di sicurezza per numeri realistici
+        C = np.clip(C_new, 0, 50)
         
-        if t % 10 == 0:
-            # Valutazione rischio (Normalizzata per evitare picchi assurdi)
-            impatto = np.max(C[20:45, 10:40]) * 0.1
+        if t % 12 == 0:
+            # Calcolo del picco sui palazzi con scala realistica
+            val_palazzi = np.max(C[20:45, 10:40]) * 0.15 
             
             fig = go.Figure(data=[
                 go.Surface(z=C, colorscale='YlOrRd', showscale=False),
-                go.Surface(z=obstacles * 2, colorscale='Greys', opacity=0.5, showscale=False)
+                go.Surface(z=obstacles * 2, colorscale='Greys', opacity=0.4, showscale=False)
             ])
             fig.update_layout(scene=dict(zaxis=dict(range=[0, 10])), margin=dict(l=0, r=0, b=0, t=0))
-            grafico.plotly_chart(fig, use_container_width=True)
+            plot.plotly_chart(fig, use_container_width=True)
             
-            stato = "ALLERTA" if impatto > soglia else "SICURO"
-            testo.write(f"Stato: {stato} | Concentrazione rilevata: {impatto:.3f} ppm | Soglia: {soglia}")
+            res = "ALLERTA" if val_palazzi > soglia else "SICURO"
+            txt.write(f"Stato: {res} | Picco su Edifici: {val_palazzi:.3f} ppm | Soglia: {soglia}")
 
-if st.sidebar.button("Avvia Analisi"):
-    esegui_simulazione()
+if st.sidebar.button("Avvia Simulazione"):
+    start_sim()
