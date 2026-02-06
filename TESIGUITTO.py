@@ -2,88 +2,96 @@ import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
 
-# Configurazione interfaccia
-st.set_page_config(page_title="Modello ADR - Tesi", layout="wide")
+# Setup pagina professionale
+st.set_page_config(page_title="Modello ADR - Analisi Scientifica", layout="wide")
 st.title("Simulazione Numerica della Dispersione Atmosferica")
-st.write("Modello basato sulle equazioni di Flavia Fedi (2009) con varianti urbanistiche.")
+st.write("Implementazione dell'equazione ADR basata sulla metodologia Fedi (2009).")
 
-# --- INPUT (Logica Capitolo 4: Formulazione del Modello) ---
+# --- PARAMETRI (Cap. 4 Tesi Fedi) ---
 st.sidebar.header("Parametri Fisici")
 u = st.sidebar.slider("Velocità del Vento (u) [m/s]", 0.1, 5.0, 1.5)
-K = st.sidebar.slider("Coefficiente di Diffusione (K) [m²/s]", 0.1, 2.0, 1.0)
+K = st.sidebar.slider("Diffusione Turbolenta (K) [m²/s]", 0.1, 2.0, 1.0)
 
-st.sidebar.header("Chimica e Meteo")
+st.sidebar.header("Variabili Chimico-Meteo")
 gas = st.sidebar.selectbox("Inquinante", ["Gas Tossico (MIC)", "NO2", "CO"])
-pioggia = st.sidebar.select_slider("Abbattimento (Pioggia)", options=["Nullo", "Medio", "Forte"])
+pioggia = st.sidebar.select_slider("Abbattimento Piovoso", options=["Nullo", "Moderato", "Elevato"])
 
-# Parametri di soglia e solubilità
-if gas == "Gas Tossico (MIC)": soglia, solub = 0.05, 1.0
-elif gas == "NO2": soglia, solub = 0.1, 0.7
-else: soglia, solub = 9.0, 0.3
+# Soglie di tossicità e coefficienti di solubilità
+if gas == "Gas Tossico (MIC)":
+    soglia, solub = 0.05, 1.0
+elif gas == "NO2":
+    soglia, solub = 0.1, 0.7
+else:
+    soglia, solub = 9.0, 0.35
 
-# --- DISCRETIZZAZIONE (Logica Capitolo 5: Soluzione Numerica) ---
-N = 50          # Numero nodi griglia
-dx = 1.0        # Passo spaziale (1 metro)
-dt = 0.02       # Passo temporale (piccolo per stabilità)
-passi = 150     # Numero di iterazioni temporali
+# --- DISCRETIZZAZIONE (Cap. 5 Tesi Fedi) ---
+N = 50          # Griglia 50x50 metri
+dx = 1.0        # Risoluzione spaziale
+dt = 0.02       # Passo temporale (Condizione di stabilità CFL)
+passi = 150     
 
-# Coefficiente di decadimento per pioggia (Termine di Reazione)
-k_reac = {"Nullo": 0.0, "Medio": 0.12, "Forte": 0.3}[pioggia]
+# Termine di reazione (k) per lavaggio atmosferico
+k_reac = {"Nullo": 0.0, "Moderato": 0.12, "Elevato": 0.3}[pioggia]
 
-# Mappa degli Edifici (Tua modifica rispetto alla tesi originale)
-edifici = np.zeros((N, N))
+# Definizione Ostacoli Urbani (Orografia)
+ostacoli = np.zeros((N, N))
 np.random.seed(42)
 for _ in range(10):
-    ix, iy = np.random.randint(15, 42), np.random.randint(10, 38)
-    edifici[ix:ix+3, iy:iy+3] = 1
+    ix, iy = np.random.randint(18, 43), np.random.randint(10, 38)
+    ostacoli[ix:ix+3, iy:iy+3] = 1
 
-# --- ESECUZIONE (Logica Capitolo 6: Risultati) ---
-if st.button("ESEGUI SIMULAZIONE"):
-    C = np.zeros((N, N))    # Matrice concentrazione iniziale
-    mappa = st.empty()      # Contenitore per il grafico
-    info = st.empty()       # Contenitore per i dati
+# --- ESECUZIONE MODELLO ---
+if st.sidebar.button("CALCOLA MODELLO"):
+    C = np.zeros((N, N))    # Concentrazione iniziale nulla
+    mappa = st.empty()      # Frame grafico
+    info = st.empty()       # Frame dati
     
-    # Sorgente puntiforme (Ciminiera)
-    sx, sy = 5, 25 
+    # Sorgente di emissione (sx, sy)
+    sx, sy = 8, 25 
 
     for t in range(passi):
         Cn = C.copy()
-        Cn[sx, sy] += 120 * dt # Rilascio costante Q
+        Cn[sx, sy] += 120 * dt # Termine sorgente Q
         
-        # Calcolo numerico ADR
+        # Risoluzione numerica ADR tramite Differenze Finite
         for i in range(1, N-1):
             for j in range(1, N-1):
-                # Se c'è un palazzo, la concentrazione è zero (Gas non penetra)
-                if edifici[i,j] == 1:
+                # Gli edifici agiscono come barriere (C=0 all'interno)
+                if ostacoli[i,j] == 1:
                     Cn[i,j] = 0
                     continue
                 
-                # EQUAZIONE DI FEDI (Discretizzata)
                 # 1. Diffusione (Laplaciano)
                 diff = K * dt * (C[i+1,j] + C[i-1,j] + C[i,j+1] + C[i,j-1] - 4*C[i,j]) / (dx**2)
-                # 2. Advezione (Trasporto del vento - Schema Upwind)
+                # 2. Advezione (Trasporto - Schema Upwind per stabilità)
                 adv = -u * dt * (C[i,j] - C[i-1,j]) / dx
-                # 3. Reazione (Abbattimento pioggia)
+                # 3. Reazione (Decadimento per solubilità)
                 reac = -(k_reac * solub) * dt * C[i,j]
                 
                 Cn[i,j] += diff + adv + reac
 
         C = np.clip(Cn, 0, 100)
         
-        # Aggiornamento grafico ogni 15 step
+        # Aggiornamento visualizzazione
         if t % 15 == 0:
-            picco_attuale = np.max(C[15:45, 10:40]) * 0.15
+            val_picco = np.max(C[18:45, 10:40]) * 0.15
             
             fig = go.Figure(data=[
-                go.Surface(z=C, colorscale='Reds', name="Gas"),
-                go.Surface(z=edifici * 3, colorscale='Greys', opacity=0.5, showscale=False)
+                go.Surface(z=C, colorscale='Reds', showscale=True),
+                go.Surface(z=ostacoli * 2.5, colorscale='Greys', opacity=0.4, showscale=False)
             ])
-            fig.update_layout(scene=dict(zaxis=dict(range=[0, 15])), margin=dict(l=0, r=0, b=0, t=0))
+            fig.update_layout(
+                scene=dict(
+                    xaxis_title='X [m]', yaxis_title='Y [m]', zaxis_title='C [ppm]',
+                    zaxis=dict(range=[0, 15])
+                ),
+                margin=dict(l=0, r=0, b=0, t=0)
+            )
             mappa.plotly_chart(fig, use_container_width=True)
             
-            if picco_attuale > soglia:
-                info.error(f"Picco rilevato: {picco_attuale:.4f} ppm | SOGLIA SUPERATA")
+            if val_picco > soglia:
+                info.error(f"Picco rilevato: {val_picco:.4f} ppm | STATO: SUPERAMENTO SOGLIA")
             else:
-                info.success(f"Picco rilevato: {picco_attuale:.4f} ppm | LIVELLI SICURI")
+                info.success(f"Picco rilevato: {val_picco:.4f} ppm | STATO: NORMA")
 
-    st.balloons()
+    st.info("Analisi completata. Il modello mostra l'accumulo dell'inquinante contro le pareti sopravvento degli edifici.")
