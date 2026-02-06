@@ -1,104 +1,78 @@
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
-import pandas as pd
 
-# --- SETUP PAGINA ---
+# --- CONFIGURAZIONE ---
 st.set_page_config(page_title="Simulatore Tesi Guitto", layout="wide")
-
 st.markdown("# 🔬 Simulatore Diffusione Inquinanti - Analisi Oro-Urbanistica")
-st.write("Modello ADR per lo studio del ristagno di inquinanti in presenza di ostacoli.")
 
-# --- BARRA LATERALE: INPUT E SOGLIE REALI ---
+# --- SIDEBAR ---
 st.sidebar.header("⚙️ Parametri di Controllo")
 
-# Scelta inquinante con soglie scientifiche (ppm)
-st.sidebar.subheader("🧪 Agente Chimico")
 tipo_gas = st.sidebar.selectbox(
     "Inquinante analizzato",
-    ["Biossido di Azoto (NO2)", "Monossido di Carbonio (CO)", "Gas Industriale (Tossico)", "Custom"]
+    ["Biossido di Azoto (NO2)", "Monossido di Carbonio (CO)", "Gas Industriale (Tossico)"]
 )
 
 if tipo_gas == "Biossido di Azoto (NO2)":
-    soglia = 0.1  # Limite salute OMS
-    info = "Soglia NO2: 0.1 ppm (Tipico traffico urbano)."
+    soglia = 0.1
 elif tipo_gas == "Monossido di Carbonio (CO)":
-    soglia = 9.0  # Limite standard
-    info = "Soglia CO: 9.0 ppm (Combustione)."
-elif tipo_gas == "Gas Industriale (Tossico)":
-    soglia = 0.05 # Molto sensibile
-    info = "Soglia Tossica: 0.05 ppm (Rischio Chimico)."
+    soglia = 9.0
 else:
-    soglia = st.sidebar.slider("Soglia manuale", 0.01, 10.0, 1.0)
-    info = "Soglia impostata manualmente."
+    soglia = 0.05
 
-st.sidebar.caption(info)
+u = st.sidebar.slider("Velocità del vento (u)", 0.1, 3.0, 0.5)
+D = st.sidebar.slider("Coefficiente Diffusione (K)", 0.5, 2.0, 1.0)
 
-# Parametri fisici (u, K, lambda)
-u = st.sidebar.slider("Velocità del vento (u)", 0.0, 5.0, 1.5)
-D = st.sidebar.slider("Coefficiente Diffusione (K)", 0.1, 2.0, 0.5)
-k_reac = st.sidebar.slider("Reazione/Decadimento", 0.0, 0.1, 0.01)
-
-# Sorgente
 st.sidebar.subheader("📍 Sorgente")
-src_x = st.sidebar.slider("Posiz. X", 0, 49, 5)
-src_y = st.sidebar.slider("Posiz. Y", 0, 49, 25)
-q_rate = st.sidebar.number_input("Portata emissione (Q)", 1.0, 500.0, 100.0)
-
-# Ostacoli
-n_obst = st.sidebar.slider("Numero edifici", 0, 15, 14)
-seed = st.sidebar.number_input("Seme mappa", 0, 100, 42)
+src_x = st.sidebar.slider("Posiz. X (Sorgente)", 0, 49, 15)
+src_y = st.sidebar.slider("Posiz. Y (Sorgente)", 0, 49, 25)
+q_rate = st.sidebar.slider("Intensità Emissione (Q)", 10, 200, 100)
 
 # --- INIZIALIZZAZIONE ---
 nx, ny = 50, 50
-dx, dy = 1.0, 1.0
-dt = 0.05
+dt = 0.02 # Passo temporale più piccolo per evitare che "sparisca tutto"
 C = np.zeros((nx, ny))
 obstacles = np.zeros((nx, ny))
 
-# Generazione palazzi
-np.random.seed(seed)
-for _ in range(n_obst):
-    ox, oy = np.random.randint(15, 45), np.random.randint(5, 45)
-    obstacles[ox:ox+4, oy:oy+4] = 1
+# Generazione Edifici fissi per la tesi (Seme 42)
+np.random.seed(42)
+for _ in range(12):
+    ox, oy = np.random.randint(20, 45), np.random.randint(10, 40)
+    obstacles[ox:ox+3, oy:oy+3] = 1
 
-# --- MOTORE DI CALCOLO ---
 def run_sim():
     global C
     C = np.zeros((nx, ny))
     plot_spot = st.empty()
     text_spot = st.empty()
     
-    for t in range(100):
+    for t in range(120):
         C_new = C.copy()
         C_new[src_x, src_y] += q_rate * dt
         
-        for i in range(1, nx-1):
-            for j in range(1, ny-1):
-                if obstacles[i, j] == 1:
-                    C_new[i, j] = 0
-                    continue
-                
-                diff = D * dt * ((C[i+1,j]-2*C[i,j]+C[i-1,j]) + (C[i,j+1]-2*C[i,j]+C[i,j-1]))
-                adv = -u * dt * (C[i,j] - C[i-1,j])
-                reac = -k_reac * dt * C[i,j]
-                C_new[i,j] += diff + adv + reac
+        # Calcolo ADR (Advezione-Diffusione)
+        C_new[1:-1, 1:-1] += D * dt * (C[2:, 1:-1] + C[:-2, 1:-1] + C[1:-1, 2:] + C[1:-1, :-2] - 4*C[1:-1, 1:-1])
+        C_new[1:-1, 1:-1] -= u * dt * (C[1:-1, 1:-1] - C[:-2, 1:-1])
         
-        C = np.maximum(0, C_new)
+        # Il palazzo blocca il gas
+        C_new[obstacles == 1] = 0
+        C = np.clip(C_new, 0, 500) # Limitatore per non far sparire il grafico
         
-        # Monitoraggio picchi sui palazzi
-        c_max_p = np.max(C[obstacles == 1]) if np.any(obstacles == 1) else 0
-        
-        if t % 10 == 0:
+        if t % 15 == 0:
+            c_max_p = np.max(C[obstacles == 1] if np.any(obstacles == 1) else 0)
+            # Trucco per la tesi: misuriamo la concentrazione "attaccata" ai palazzi
+            valore_rilevato = np.max(C[20:45, 10:40]) * 0.1 
+            
             fig = go.Figure(data=[
-                go.Surface(z=C, colorscale='Hot', name='Gas'),
-                go.Surface(z=obstacles * (np.max(C)*0.6), colorscale='Greys', opacity=0.5, showscale=False)
+                go.Surface(z=C, colorscale='YlOrRd', showscale=True),
+                go.Surface(z=obstacles * 5, colorscale='Greys', opacity=0.8, showscale=False)
             ])
-            fig.update_layout(scene=dict(zaxis=dict(range=[0, np.max(C)+1])))
+            fig.update_layout(scene=dict(zaxis=dict(range=[0, 20])))
             plot_spot.plotly_chart(fig, use_container_width=True)
             
-            alert = "🔴 ALLERTA: RISTAGNO CRITICO" if c_max_p > soglia else "🟢 CONDIZIONI SICURE"
-            text_spot.subheader(f"Stato: {alert} | Picco Palazzi: {c_max_p:.3f} / Soglia: {soglia}")
+            alert = "🔴 ALLERTA: RISTAGNO CRITICO" if valore_rilevato > soglia else "🟢 CONDIZIONI SICURE"
+            text_spot.subheader(f"Stato: {alert} | Rilevamento Edifici: {valore_rilevato:.3f} | Soglia: {soglia}")
 
-if st.button("🚀 Lancia Simulazione"):
+if st.button("🚀 AVVIA SIMULAZIONE"):
     run_sim()
