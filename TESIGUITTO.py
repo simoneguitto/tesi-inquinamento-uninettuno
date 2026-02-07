@@ -1,103 +1,104 @@
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
-from io import BytesIO
 
-# Configurazione dell'interfaccia
-st.set_page_config(page_title="Analisi Dispersione Atmosferica", layout="wide")
-st.title("Simulatore di Dispersione Inquinanti in Ambiente Urbano")
-st.write("Modello numerico basato sulle equazioni di Advezione-Diffusione-Reazione (ADR).")
+# --- INIZIALIZZAZIONE DEL SISTEMA ---
+st.set_page_config(page_title="Simulatore ADR Urbano", layout="wide")
+st.title("Modello Numerico di Dispersione degli Inquinanti")
+st.write("Analisi della diffusione atmosferica tramite risoluzione numerica delle equazioni di trasporto.")
 
-# --- BARRA LATERALE: INPUT TECNICI ---
-st.sidebar.header("Parametri del Modello")
-u_vento = st.sidebar.slider("Velocità del Vento (u) [m/s]", 0.1, 5.0, 1.5)
-diff_K = st.sidebar.slider("Coefficiente di Diffusione (K) [m²/s]", 0.1, 2.0, 1.0)
+# --- DEFINIZIONE DEI PARAMETRI FISICI (SIDEBAR) ---
+st.sidebar.header("Parametri di Controllo")
+velocita_u = st.sidebar.slider("Velocità del fluido (u) [m/s]", 0.1, 5.0, 1.5)
+diffusione_K = st.sidebar.slider("Coefficiente diffusivo (K) [m²/s]", 0.1, 2.0, 1.0)
 
 st.sidebar.header("Variabili Ambientali")
-tipo_gas = st.sidebar.selectbox("Sostanza Inquinante", ["Sostanza A (Tossica)", "Sostanza B (NO2)", "Sostanza C (CO)"])
-piovosita = st.sidebar.select_slider("Livello di Pioggia", options=["Assente", "Moderato", "Intenso"])
+sostanza_monitorata = st.sidebar.selectbox("Inquinante", ["Sostanza Alta Solubilità", "Sostanza Media Solubilità", "Sostanza Bassa Solubilità"])
+intensita_pioggia = st.sidebar.select_slider("Grado di abbattimento", options=["Minimo", "Medio", "Massimo"])
 
-# Definizione soglie e parametri chimico-fisici
-if tipo_gas == "Sostanza A (Tossica)":
-    limite, solubilita = 0.05, 1.0
-elif tipo_gas == "Sostanza B (NO2)":
-    limite, solubilita = 0.1, 0.7
+# Parametri chimici e limiti di sicurezza
+if sostanza_monitorata == "Sostanza Alta Solubilità":
+    soglia_critica, sol_coeff = 0.05, 1.0
+elif sostanza_monitorata == "Sostanza Media Solubilità":
+    soglia_critica, sol_coeff = 0.1, 0.7
 else:
-    limite, solubilita = 9.0, 0.35
+    soglia_critica, sol_coeff = 9.0, 0.35
 
-# --- SETUP GRIGLIA NUMERICA ---
-N = 50          # Dimensione matrice
-dx = 1.0        # Risoluzione spaziale (metri)
-dt = 0.02       # Passo temporale per stabilità (CFL)
-iterazioni = 160 
+# --- DISCRETIZZAZIONE E DOMINIO COMPUTAZIONALE ---
+dim_griglia = 50  # Nodi della griglia spaziale
+dx = 1.0         # Risoluzione spaziale unitaria
+dt = 0.02        # Intervallo temporale (rispetto della condizione di stabilità)
+step_totali = 160 
 
-# Coefficiente di abbattimento (Scavenging coefficient)
-k_lavaggio = {"Assente": 0.0, "Moderato": 0.12, "Intenso": 0.3}[piovosita]
+# Coefficiente di rimozione per precipitazione
+k_washout = {"Minimo": 0.0, "Medio": 0.12, "Massimo": 0.3}[intensita_pioggia]
 
-# Definizione della Topografia (Edifici)
-mappa_ostacoli = np.zeros((N, N))
+# Configurazione della Topografia (Morfologia urbana)
+# Gli ostacoli rappresentano volumi impermeabili che deviano il flusso
+matrice_ostacoli = np.zeros((dim_griglia, dim_griglia))
 np.random.seed(42)
 for _ in range(10):
     ix, iy = np.random.randint(18, 43), np.random.randint(10, 38)
-    mappa_ostacoli[ix:ix+3, iy:iy+3] = 1
+    matrice_ostacoli[ix:ix+3, iy:iy+3] = 1
 
-# --- ESECUZIONE SIMULAZIONE ---
-if st.sidebar.button("ESEGUI ANALISI"):
-    C = np.zeros((N, N))    # Concentrazione iniziale
-    display_grafico = st.empty()
-    display_info = st.empty()
+# --- MOTORE DI CALCOLO (Metodo delle Differenze Finite) ---
+if st.sidebar.button("ESEGUI SIMULAZIONE"):
+    Conc = np.zeros((dim_griglia, dim_griglia)) # Matrice concentrazione tempo t
+    area_grafica = st.empty()
+    area_messaggi = st.empty()
     
-    # Coordinate sorgente di emissione
-    sx, sy = 8, 25 
+    # Coordinate sorgente puntiforme
+    p_x, p_y = 8, 25 
 
-    for t in range(iterazioni):
-        Cn = C.copy()
-        Cn[sx, sy] += 125 * dt # Rilascio costante
+    for t in range(step_totali):
+        Conc_n = Conc.copy()
+        Conc_n[p_x, p_y] += 125 * dt # Termine sorgente (Emissione Q)
         
-        # Risoluzione numerica ADR tramite differenze finite
-        for i in range(1, N-1):
-            for j in range(1, N-1):
-                # Se la cella è un ostacolo, saltiamo il calcolo interno
-                if mappa_ostacoli[i,j] == 1:
-                    continue
+        # Iterazione spaziale per il calcolo dell'equazione ADR
+        for i in range(1, dim_griglia-1):
+            for j in range(1, dim_griglia-1):
+                # Gestione dell'interazione con gli ostacoli orografici
+                if matrice_ostacoli[i,j] == 1:
+                    continue # Il volume solido non permette la penetrazione del gas
                 
-                # Calcolo dei tre termini dell'equazione
-                # 1. Diffusione spaziale
-                termine_diff = diff_K * dt * (C[i+1,j] + C[i-1,j] + C[i,j+1] + C[i,j-1] - 4*C[i,j]) / (dx**2)
-                # 2. Trasporto dovuto al vento (Advezione Upwind)
-                termine_adv = -u_vento * dt * (C[i,j] - C[i-1,j]) / dx
-                # 3. Rimozione chimico-fisica (Reazione)
-                termine_reac = -(k_lavaggio * solubilita) * dt * C[i,j]
+                # Calcolo componenti numeriche
+                # 1. Diffusione (Operatore Laplaciano)
+                term_diff = diffusione_K * dt * (Conc[i+1,j] + Conc[i-1,j] + Conc[i,j+1] + Conc[i,j-1] - 4*Conc[i,j]) / (dx**2)
+                # 2. Trasporto Adveettivo (Direzione prevalente del vento - Schema Upwind)
+                term_adv = -velocita_u * dt * (Conc[i,j] - Conc[i-1,j]) / dx
+                # 3. Termine Reattivo (Rimozione fisica)
+                term_reac = -(k_washout * sol_coeff) * dt * Conc[i,j]
                 
-                Cn[i,j] += termine_diff + termine_adv + termine_reac
+                # Aggiornamento dello stato al passo temporale successivo
+                Conc_n[i,j] += term_diff + term_adv + term_reac
 
-        # SOLUZIONE AL VUOTO: Mascheramento post-computazionale
-        # Questa riga forza il gas a 'toccare' il bordo prima di essere azzerato nell'edificio
-        C = np.where(mappa_ostacoli == 1, 0, Cn)
-        C = np.clip(C, 0, 100)
+        # Trattamento della Topografia: Mascheramento e aderenza alle pareti
+        # Permette la visualizzazione della concentrazione a contatto con l'ostacolo
+        Conc = np.where(matrice_ostacoli == 1, 0, Conc_n)
+        Conc = np.clip(Conc, 0, 100) # Vincolo di massa non negativa
         
-        # Rendering grafico periodico
+        # Rappresentazione visiva dei risultati (Mappatura 3D)
         if t % 15 == 0:
-            picco_rilevato = np.max(C[18:45, 10:40]) * 0.15
+            picco_ppm = np.max(Conc[18:45, 10:40]) * 0.15
             
-            fig = go.Figure(data=[
-                go.Surface(z=C, colorscale='Reds', showscale=True, name="Gas"),
-                go.Surface(z=mappa_ostacoli * 2.5, colorscale='Greys', opacity=0.5, showscale=False, name="Topografia")
+            figura = go.Figure(data=[
+                go.Surface(z=Conc, colorscale='Reds', showscale=True, name="Gas"),
+                go.Surface(z=matrice_ostacoli * 2.5, colorscale='Greys', opacity=0.4, showscale=False, name="Edifici")
             ])
             
-            fig.update_layout(
+            figura.update_layout(
                 scene=dict(
-                    xaxis_title='X [m]', yaxis_title='Y [m]', zaxis_title='Conc. [ppm]',
+                    xaxis_title='X [m]', yaxis_title='Y [m]', zaxis_title='C [ppm]',
                     zaxis=dict(range=[0, 15])
                 ),
-                margin=dict(l=0, r=0, b=0, t=0),
-                height=600
+                margin=dict(l=0, r=0, b=0, t=0), height=650
             )
-            display_grafico.plotly_chart(fig, use_container_width=True)
+            area_grafica.plotly_chart(figura, use_container_width=True)
             
-            if picco_rilevato > limite:
-                display_info.error(f"ANALISI CRITICA: Picco {picco_rilevato:.4f} ppm | OLTRE SOGLIA")
+            # Valutazione del rischio in base alle soglie predefinite
+            if picco_ppm > soglia_critica:
+                area_messaggi.error(f"ATTENZIONE: Concentrazione massima {picco_ppm:.4f} ppm (Soglia superata)")
             else:
-                display_info.success(f"ANALISI STABILE: Picco {picco_rilevato:.4f} ppm | SOTTO SOGLIA")
+                area_messaggi.success(f"STATO: Concentrazione massima {picco_ppm:.4f} ppm (Entro i limiti)")
 
-    st.info("Simulazione completata. I dati mostrano l'interazione tra il pennacchio e la morfologia urbana.")
+    st.info("Analisi conclusa. Il grafico illustra la variazione del pennacchio in funzione della topografia locale.")
