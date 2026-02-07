@@ -76,4 +76,3 @@ if st.sidebar.button("AVVIA SIMULAZIONE TECNICA"):
             testo_box.info(f"Monitoraggio in tempo reale: Picco rilevato {picco:.2f} PPM")
 
     st.success("Analisi completata per l'Università Uninettuno - Facoltà di Ingegneria Civile e Ambientale.")
-    st.balloons()
