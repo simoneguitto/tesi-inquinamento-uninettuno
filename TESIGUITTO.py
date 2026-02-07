@@ -2,8 +2,14 @@ import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
 
-# --- CONFIGURAZIONE ---
-st.set_page_config(page_title="Simulatore Meteo-Urbano", layout="wide")
+# --- CONFIGURAZIONE PAGINA ---
+st.set_page_config(page_title="Simulatore Meteo-Urbano Uninettuno", layout="wide")
+
+# --- LOGO E INTESTAZIONE ---
+# Carichiamo l'immagine direttamente dal link o dal file
+st.sidebar.image("https://www.uninettunouniversity.net/images/logo-uninettuno.png", use_container_width=True)
+st.sidebar.markdown("---")
+
 st.title("Sistema Integrato di Simulazione Dispersione Atmosferica")
 st.write("Analisi dell'impatto di inquinanti in funzione di topografia, orografia e precipitazioni.")
 
@@ -17,16 +23,15 @@ num_colline = st.sidebar.slider("Numero di Colline", 0, 5, 2)
 altezza_max_colline = st.sidebar.slider("Altezza Rilievi (m)", 2.0, 10.0, 5.0)
 
 st.sidebar.header("🌦️ Parametri Meteorologici")
-# Vento in km/h per facilità, convertito poi in m/s
+# Vento in km/h con conversione fisica in m/s
 v_kmh = st.sidebar.slider("Velocità Vento (km/h)", 1.0, 20.0, 5.0)
-u_vento = v_kmh / 3.6 # Conversione fisica m/s
+u_vento = v_kmh / 3.6 
 
-# Pioggia in mm
+# Pioggia in mm/h per il washout
 mm_pioggia = st.sidebar.slider("Intensità Pioggia (mm/h)", 0, 50, 0)
 k_diff = st.sidebar.slider("Diffusione Turbolenta (K)", 0.1, 2.5, 1.0)
 
-# --- LOGICA DI CALCOLO ABBATTIMENTO (WET DEPOSITION) ---
-# Più mm di pioggia = più rimozione del gas (Reazione)
+# --- LOGICA DI CALCOLO ABBATTIMENTO ---
 sigma_pioggia = (mm_pioggia / 50) * 0.3 
 
 # --- CREAZIONE MAPPA DINAMICA ---
@@ -70,10 +75,10 @@ if st.sidebar.button("ESEGUI ANALISI METEOROLOGICA"):
             for j in range(1, N-1):
                 if edifici[i,j] == 1: continue
                 
-                # Formula ADR: Advezione + Diffusione - Rimozione (Pioggia)
+                # Formula ADR (Equazione Differenze Finite)
                 diff = k_diff * dt * (C[i+1,j] + C[i-1,j] + C[i,j+1] + C[i,j-1] - 4*C[i,j])
                 adv = -u_vento * dt * (C[i,j] - C[i-1,j])
-                reac = -sigma_pioggia * dt * C[i,j] # Termine pioggia
+                reac = -sigma_pioggia * dt * C[i,j]
                 
                 Cn[i,j] += diff + adv + reac
 
@@ -94,7 +99,7 @@ if st.sidebar.button("ESEGUI ANALISI METEOROLOGICA"):
             )
             mappa_box.plotly_chart(fig, use_container_width=True)
             
-            if picco > 0.12: testo_box.error(f"⚠️ SOGLIA SUPERATA: {picco:.4f} ppm")
+            if picco > 0.12: testo_box.error(f"⚠️ SOGLIA CRITICA: {picco:.4f} ppm")
             else: testo_box.success(f"✅ STATO SICURO: {picco:.4f} ppm")
 
-    st.info(f"Simulazione completata. Vento: {v_kmh} km/h | Pioggia: {mm_pioggia} mm/h.")
+    st.info(f"Studio elaborato per Università Telematica Internazionale UNINETTUNO.")
