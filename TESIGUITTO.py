@@ -5,11 +5,17 @@ import plotly.graph_objects as go
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Simulatore Meteo-Urbano Uninettuno", layout="wide")
 
-# --- LOGO E INTESTAZIONE ---
-# Carichiamo l'immagine direttamente dal link o dal file
-st.sidebar.image("https://www.uninettunouniversity.net/images/logo-uninettuno.png", use_container_width=True)
+# --- INSERIMENTO LOGO NELLA SIDEBAR ---
+# Se hai il file immagine sul PC, rinominalo 'logo_uninettuno.png' 
+# e usa: st.sidebar.image("logo_uninettuno.png")
+try:
+    st.sidebar.image("https://www.uninettunouniversity.net/images/logo-uninettuno.png", use_container_width=True)
+except:
+    st.sidebar.subheader("Università UNINETTUNO")
+
 st.sidebar.markdown("---")
 
+# --- INTESTAZIONE PRINCIPALE ---
 st.title("Sistema Integrato di Simulazione Dispersione Atmosferica")
 st.write("Analisi dell'impatto di inquinanti in funzione di topografia, orografia e precipitazioni.")
 
@@ -23,15 +29,13 @@ num_colline = st.sidebar.slider("Numero di Colline", 0, 5, 2)
 altezza_max_colline = st.sidebar.slider("Altezza Rilievi (m)", 2.0, 10.0, 5.0)
 
 st.sidebar.header("🌦️ Parametri Meteorologici")
-# Vento in km/h con conversione fisica in m/s
 v_kmh = st.sidebar.slider("Velocità Vento (km/h)", 1.0, 20.0, 5.0)
 u_vento = v_kmh / 3.6 
 
-# Pioggia in mm/h per il washout
 mm_pioggia = st.sidebar.slider("Intensità Pioggia (mm/h)", 0, 50, 0)
 k_diff = st.sidebar.slider("Diffusione Turbolenta (K)", 0.1, 2.5, 1.0)
 
-# --- LOGICA DI CALCOLO ABBATTIMENTO ---
+# --- LOGICA DI CALCOLO ---
 sigma_pioggia = (mm_pioggia / 50) * 0.3 
 
 # --- CREAZIONE MAPPA DINAMICA ---
@@ -40,7 +44,6 @@ dx, dt = 1.0, 0.02
 edifici = np.zeros((N, N))
 orografia = np.zeros((N, N))
 
-# Posizionamento Dinamico Palazzi
 np.random.seed(42)
 if num_palazzi > 0:
     edifici[dist_primo_palazzo : dist_primo_palazzo+4, 23:27] = 1
@@ -48,7 +51,6 @@ if num_palazzi > 0:
         px, py = np.random.randint(15, 45), np.random.randint(10, 40)
         edifici[px:px+3, py:py+3] = 1
 
-# Posizionamento Dinamico Colline
 if num_colline > 0:
     for c in range(num_colline):
         cx = 10 if c == 0 else np.random.randint(20, 45)
@@ -75,7 +77,6 @@ if st.sidebar.button("ESEGUI ANALISI METEOROLOGICA"):
             for j in range(1, N-1):
                 if edifici[i,j] == 1: continue
                 
-                # Formula ADR (Equazione Differenze Finite)
                 diff = k_diff * dt * (C[i+1,j] + C[i-1,j] + C[i,j+1] + C[i,j-1] - 4*C[i,j])
                 adv = -u_vento * dt * (C[i,j] - C[i-1,j])
                 reac = -sigma_pioggia * dt * C[i,j]
