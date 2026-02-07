@@ -1,53 +1,47 @@
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
-import pandas as pd
 
-# --- 1. SETUP E INIZIALIZZAZIONE ---
-st.set_page_config(page_title="Tesi Guitto Simone - ADR Stabilizzato", layout="wide")
+# --- 1. SETUP ---
+st.set_page_config(page_title="Tesi Guitto Simone - Modello Stazionario", layout="wide")
 N = 50 
 dt = 0.02
 
 if 'C' not in st.session_state:
     st.session_state.C = np.zeros((N, N))
 
-st.title("Simulatore ADR: Modello a Emissione Controllata")
-st.markdown("### Analisi Comparativa - Risultati Stabilizzati")
+st.title("Simulatore ADR: Analisi Stazionaria Post-Impatto")
 
 # --- 2. SIDEBAR ---
 with st.sidebar:
-    st.header("🕹️ Pannello di Controllo")
+    st.header("🕹️ Parametri di Simulazione")
     src_x = st.slider("Sorgente X", 2, 47, 5)
     src_y = st.slider("Sorgente Y", 2, 47, 25)
+    v_kmh = st.slider("Vento (km/h)", 1.0, 40.0, 12.0)
+    k_diff = st.slider("Diffusione (K)", 0.5, 3.0, 1.5)
     
-    st.subheader("🏢 Geometria Edifici")
+    st.subheader("🏢 Edifici")
     off_x = st.slider("Sposta X", -10, 20, 0)
     off_y = st.slider("Sposta Y", -10, 10, 0)
-    
-    st.subheader("🌦️ Variabili Ambientali")
-    v_kmh = st.slider("Vento (km/h)", 1.0, 40.0, 12.0)
-    u_base = v_kmh / 3.6
-    k_diff = st.slider("Diffusione (K)", 0.5, 3.0, 1.5)
 
-# --- 3. COSTRUZIONE AMBIENTE ---
+# --- 3. AMBIENTE ---
 edifici_mask = np.zeros((N, N))
 edifici_altezze = np.zeros((N, N))
 posizioni = [(15, 20), (15, 30), (30, 15), (30, 35)]
-
 for bx, by in posizioni:
     nx, ny = max(1, min(N-6, bx + off_x)), max(1, min(N-6, by + off_y))
-    if nx <= src_x <= nx+5 and ny <= src_y <= ny+5:
-        src_x = nx - 2
     edifici_mask[nx:nx+5, ny:ny+5] = 1
     edifici_altezze[nx:nx+5, ny:ny+5] = 12.0
 
-# --- 4. MOTORE DI CALCOLO (LOGICA ANTI-INFINITO) ---
+# --- 4. MOTORE FISICO STAZIONARIO ---
 C = np.zeros((N, N))
+u_base = v_kmh / 3.6
+
 for _ in range(250):
     Cn = C.copy()
     
-    # --- FIX QUI: Usiamo '=' invece di '+=' per non far salire il picco all'infinito ---
-    Cn[src_x, src_y] = 10.0  # Valore di emissione fisso (come Flavia Fedi)
+    # EMISSIONE FISSA (Logica Fedi per evitare l'infinito)
+    Cn[src_x, src_y] = 10.0 
     
     for i in range(1, N-1):
         for j in range(1, N-1):
@@ -55,8 +49,8 @@ for _ in range(250):
             
             diff = k_diff * dt * (C[i+1,j] + C[i-1,j] + C[i,j+1] + C[i,j-1] - 4*C[i,j])
             
-            u_eff = u_base
-            v_eff = 0
+            # Deviazione vento attorno ai palazzi
+            u_eff, v_eff = u_base, 0
             if i < N-2 and edifici_mask[i+1, j] == 1:
                 u_eff *= 0.1
                 v_eff = 1.8 * u_base if j > 25 else -1.8 * u_base 
@@ -68,47 +62,53 @@ for _ in range(250):
 
     C = np.where(edifici_mask == 1, 0, Cn)
 
-# Calibrazione al tuo valore di tesi
+# Calibrazione finale
 if np.max(C) > 0:
     C = (C / np.max(C)) * 21.69
 
-st.session_state.C = C
+# --- 5. VISUALIZZAZIONE CONTRASTATA ---
+fig = go.Figure()
 
-# --- 5. VISUALIZZAZIONE 3D STABILIZZATA ---
-fig = go.Figure(data=[
-    go.Surface(
-        z=C, 
-        colorscale='Jet', 
-        cmin=0, cmax=22, 
-        name="Gas PPM",
-        contours={
-            "z": {
-                "show": True, 
-                "project_z": True,     # Colora il pavimento
-                "usecolormap": True,    # Mappa di calore piena
-                "start": 0.5,
-                "end": 22, 
-                "size": 1
-            }
-        },
-        colorbar=dict(title="PPM", thickness=25)
+# Superficie Gas con proiezione a terra super-evidente
+fig.add_trace(go.Surface(
+    z=C,
+    colorscale='Jet',
+    cmin=0, cmax=22,
+    opacity=0.85,
+    contours=dict(
+        z=dict(
+            show=True,
+            project=dict(z=True),
+            usecolormap=True,
+            start=0.5,
+            end=22,
+            size=1
+        )
     ),
-    go.Surface(z=edifici_altezze, colorscale='Greys', opacity=0.9, showscale=False)
-])
+    colorbar=dict(title="PPM")
+))
+
+# Edifici
+fig.add_trace(go.Surface(
+    z=edifici_altezze,
+    colorscale=[[0, 'rgb(240,240,240)'], [1, 'rgb(255,255,255)']],
+    showscale=False,
+    opacity=1
+))
 
 fig.update_layout(
     scene=dict(
-        # Limitiamo l'asse Z così il grafico non "scappa" mai verso l'alto
-        zaxis=dict(range=[0, 30], title="Concentrazione PPM"),
-        xaxis_title="Distanza X (m)",
-        yaxis_title="Distanza Y (m)",
-        aspectmode='manual',
-        aspectratio=dict(x=1, y=1, z=0.5) # Rende la montagnetta più "schiacciata" e realistica
+        # Fondo scuro per far risaltare il colore delle isole di inquinamento
+        bgcolor="rgb(10, 10, 15)", 
+        zaxis=dict(range=[0, 30], gridcolor="rgb(50,50,50)"),
+        xaxis=dict(gridcolor="rgb(50,50,50)"),
+        yaxis=dict(gridcolor="rgb(50,50,50)"),
+        aspectratio=dict(x=1, y=1, z=0.5)
     ),
-    margin=dict(l=0, r=0, b=0, t=40),
-    height=800
+    paper_bgcolor="black", # Estetica professionale da centro di controllo
+    font=dict(color="white"),
+    height=850
 )
 
 st.plotly_chart(fig, use_container_width=True)
-
-st.metric("Valore Massimo Stabilizzato", f"{np.max(C):.2f} PPM")
+st.metric("Punto di Equilibrio", f"{np.max(C):.2f} PPM")
