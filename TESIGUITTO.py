@@ -3,26 +3,31 @@ import numpy as np
 import plotly.graph_objects as go
 
 # --- CONFIGURAZIONE ---
-st.set_page_config(page_title="Laboratorio ADR Dinamico", layout="wide")
-st.title("Simulatore Meteorologico: Editor Multi-Ostacolo")
-st.write("Configura la densità urbana e orografica per analizzare la dispersione del gas.")
+st.set_page_config(page_title="Simulatore Meteo-Urbano", layout="wide")
+st.title("Sistema Integrato di Simulazione Dispersione Atmosferica")
+st.write("Analisi dell'impatto di inquinanti in funzione di topografia, orografia e precipitazioni.")
 
 # --- SIDEBAR: CONTROLLO SCENARIO ---
 st.sidebar.header("🏢 Configurazione Urbanistica")
-num_palazzi = st.sidebar.slider("Numero di Palazzi", 0, 10, 3)
-dist_primo_palazzo = st.sidebar.slider("Distanza Primo Palazzo (X)", 8, 20, 12)
+num_palazzi = st.sidebar.slider("Numero di Palazzi", 0, 10, 4)
+dist_primo_palazzo = st.sidebar.slider("Distanza Primo Palazzo (m)", 8, 20, 12)
 
 st.sidebar.header("⛰️ Configurazione Orografica")
 num_colline = st.sidebar.slider("Numero di Colline", 0, 5, 2)
-altezza_max_colline = st.sidebar.slider("Altezza Massima Rilievi", 2.0, 10.0, 5.0)
+altezza_max_colline = st.sidebar.slider("Altezza Rilievi (m)", 2.0, 10.0, 5.0)
 
-st.sidebar.header("🌦️ Parametri Atmosferici")
-clima = st.sidebar.selectbox("Stabilità Aria", ["Giorno (Turbolento)", "Standard", "Inversione (Ristagno)"])
-u_v = 1.0 if clima == "Giorno (Turbolento)" else (1.5 if clima == "Standard" else 0.6)
-k_v = 1.8 if clima == "Giorno (Turbolento)" else (1.0 if clima == "Standard" else 0.3)
+st.sidebar.header("🌦️ Parametri Meteorologici")
+# Vento in km/h per facilità, convertito poi in m/s
+v_kmh = st.sidebar.slider("Velocità Vento (km/h)", 1.0, 20.0, 5.0)
+u_vento = v_kmh / 3.6 # Conversione fisica m/s
 
-u_vento = st.sidebar.slider("Velocità Vento", 0.1, 5.0, u_v)
-k_diff = st.sidebar.slider("Diffusione (K)", 0.1, 2.5, k_v)
+# Pioggia in mm
+mm_pioggia = st.sidebar.slider("Intensità Pioggia (mm/h)", 0, 50, 0)
+k_diff = st.sidebar.slider("Diffusione Turbolenta (K)", 0.1, 2.5, 1.0)
+
+# --- LOGICA DI CALCOLO ABBATTIMENTO (WET DEPOSITION) ---
+# Più mm di pioggia = più rimozione del gas (Reazione)
+sigma_pioggia = (mm_pioggia / 50) * 0.3 
 
 # --- CREAZIONE MAPPA DINAMICA ---
 N = 50
@@ -31,11 +36,9 @@ edifici = np.zeros((N, N))
 orografia = np.zeros((N, N))
 
 # Posizionamento Dinamico Palazzi
-np.random.seed(42) # Per mantenere la stessa "casualità" se non cambi il numero
+np.random.seed(42)
 if num_palazzi > 0:
-    # Il primo palazzo è sempre in traiettoria critica (X impostata dall'utente)
     edifici[dist_primo_palazzo : dist_primo_palazzo+4, 23:27] = 1
-    # Gli altri palazzi vengono sparsi nel dominio
     for _ in range(num_palazzi - 1):
         px, py = np.random.randint(15, 45), np.random.randint(10, 40)
         edifici[px:px+3, py:py+3] = 1
@@ -43,64 +46,55 @@ if num_palazzi > 0:
 # Posizionamento Dinamico Colline
 if num_colline > 0:
     for c in range(num_colline):
-        # Distribuzione delle colline
-        cx = 10 if c == 0 else np.random.randint(20, 45) # La prima è vicina, le altre sparse
+        cx = 10 if c == 0 else np.random.randint(20, 45)
         cy = 15 if c == 0 else np.random.randint(10, 40)
-        h = altezza_max_colline * (0.5 + np.random.rand() * 0.5)
-        
+        h = altezza_max_colline * (0.6 + np.random.rand() * 0.4)
         for i in range(N):
             for j in range(N):
                 dist = np.sqrt((i-cx)**2 + (j-cy)**2)
                 if dist < 12:
                     orografia[i,j] += h * np.exp(-0.07 * dist**2)
 
-# --- MOTORE DI CALCOLO ---
-if st.sidebar.button("AVVIA SIMULAZIONE MULTI-OSTACOLO"):
+# --- MOTORE DI CALCOLO ADR ---
+if st.sidebar.button("ESEGUI ANALISI METEOROLOGICA"):
     C = np.zeros((N, N))
     mappa_box = st.empty()
     testo_box = st.empty()
-    sx, sy = 5, 25 # Sorgente fissa
+    sx, sy = 5, 25 
 
     for t in range(160):
         Cn = C.copy()
-        Cn[sx, sy] += 155 * dt # Rilascio costante
+        Cn[sx, sy] += 160 * dt 
         
         for i in range(1, N-1):
             for j in range(1, N-1):
                 if edifici[i,j] == 1: continue
                 
-                # Formula ADR (Equazione di Trasporto)
+                # Formula ADR: Advezione + Diffusione - Rimozione (Pioggia)
                 diff = k_diff * dt * (C[i+1,j] + C[i-1,j] + C[i,j+1] + C[i,j-1] - 4*C[i,j])
                 adv = -u_vento * dt * (C[i,j] - C[i-1,j])
-                Cn[i,j] += diff + adv
+                reac = -sigma_pioggia * dt * C[i,j] # Termine pioggia
+                
+                Cn[i,j] += diff + adv + reac
 
-        # Pulizia e aderenza alle pareti
         C = np.where(edifici == 1, 0, Cn)
         C = np.clip(C, 0, 100)
         
         if t % 15 == 0:
             picco = np.max(C) * 0.15
             fig = go.Figure(data=[
-                go.Surface(
-                    z=C + orografia, 
-                    colorscale='Jet', 
-                    cmin=0.01, cmax=12, 
-                    name="Gas"
-                ),
+                go.Surface(z=C + orografia, colorscale='Jet', cmin=0.01, cmax=12, name="Gas"),
                 go.Surface(z=edifici * 4.5, colorscale='Greys', opacity=0.9, showscale=False),
                 go.Surface(z=orografia, colorscale='Greens', opacity=0.3, showscale=False)
             ])
             
             fig.update_layout(
-                scene=dict(
-                    zaxis=dict(range=[0, 15], title="Concentrazione"),
-                    xaxis_title="X [m]", yaxis_title="Y [m]"
-                ),
+                scene=dict(zaxis=dict(range=[0, 15]), xaxis_title="X (m)", yaxis_title="Y (m)"),
                 margin=dict(l=0, r=0, b=0, t=0), height=750
             )
             mappa_box.plotly_chart(fig, use_container_width=True)
             
-            if picco > 0.1: testo_box.error(f"⚠️ SOGLIA CRITICA: {picco:.4f} ppm")
+            if picco > 0.12: testo_box.error(f"⚠️ SOGLIA SUPERATA: {picco:.4f} ppm")
             else: testo_box.success(f"✅ STATO SICURO: {picco:.4f} ppm")
 
-    st.info("Simulazione completata. L'interazione tra i molteplici ostacoli crea zone di ombra e accumulo.")
+    st.info(f"Simulazione completata. Vento: {v_kmh} km/h | Pioggia: {mm_pioggia} mm/h.")
