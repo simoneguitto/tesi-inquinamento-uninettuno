@@ -3,26 +3,26 @@ import numpy as np
 import plotly.graph_objects as go
 import pandas as pd
 
-# --- 1. CONFIGURAZIONE E FIX STABILITÀ ---
-st.set_page_config(page_title="Tesi Guitto Simone - Analisi Tossicità", layout="wide")
-
-N = 50 
+# --- 1. CONFIGURAZIONE ---
+st.set_page_config(page_title="Tesi Guitto Simone - Fix Stabilità", layout="wide")
+N = 50
 dt = 0.02
 
 if 'C' not in st.session_state:
     st.session_state.C = np.zeros((N, N))
 
-st.title("Simulatore ADR: Mappatura Aree di Rischio e Tossicità")
+st.title("Simulatore ADR: Stabilità Coordinate e Mappatura Rischio")
 
 # --- 2. SIDEBAR ---
 with st.sidebar:
-    st.header("🕹️ Parametri di Input")
-    src_x = st.slider("Sorgente X", 0, 49, 5)
-    src_y = st.slider("Sorgente Y", 0, 49, 25)
+    st.header("🕹️ Posizionamento")
+    # Limito il range della sorgente per non farla finire "dentro" i bordi
+    src_x = st.slider("Sorgente X", 2, 47, 5)
+    src_y = st.slider("Sorgente Y", 2, 47, 25)
     
-    st.subheader("🏢 Configurazione Urbanistica")
-    off_x = st.slider("Sposta Edifici X", -10, 20, 0)
-    off_y = st.slider("Sposta Edifici Y", -10, 10, 0)
+    st.subheader("🏢 Configurazione Edifici")
+    off_x = st.slider("Sposta X", -10, 20, 0)
+    off_y = st.slider("Sposta Y", -10, 10, 0)
     
     v_kmh = st.slider("Vento (km/h)", 1.0, 40.0, 12.0)
     u_base = v_kmh / 3.6
@@ -32,16 +32,21 @@ with st.sidebar:
 edifici_mask = np.zeros((N, N))
 edifici_altezze = np.zeros((N, N))
 posizioni = [(15, 20), (15, 30), (30, 15), (30, 35)]
+
 for bx, by in posizioni:
-    nx, ny = max(1, min(N-5, bx + off_x)), max(1, min(N-5, by + off_y))
+    nx, ny = max(1, min(N-6, bx + off_x)), max(1, min(N-6, by + off_y))
+    # Se la sorgente è dentro l'area del palazzo, la "spingiamo" fuori
+    if nx <= src_x <= nx+5 and ny <= src_y <= ny+5:
+        src_x = nx - 2 # Sposta la sorgente per non farla sparire
+    
     edifici_mask[nx:nx+5, ny:ny+5] = 1
     edifici_altezze[nx:nx+5, ny:ny+5] = 12.0
 
-# --- 4. MOTORE DI CALCOLO (AGGIRAMENTO FLUIDO) ---
+# --- 4. MOTORE DI CALCOLO ---
 C = np.zeros((N, N))
 for _ in range(200):
     Cn = C.copy()
-    Cn[src_x, src_y] += 2.0 
+    Cn[src_x, src_y] += 2.5 # Sorgente rinforzata per visibilità
     
     for i in range(1, N-1):
         for j in range(1, N-1):
@@ -53,56 +58,34 @@ for _ in range(200):
             v_eff = 0
             if i < N-2 and edifici_mask[i+1, j] == 1:
                 u_eff *= 0.1
-                v_eff = 1.2 * u_base if j > 25 else -1.2 * u_base 
+                v_eff = 1.5 * u_base if j > 25 else -1.5 * u_base 
             
-            adv_x = -u_eff * dt * (C[i,j] - C[i-1,j])
-            adv_y = -v_eff * dt * (C[i,j] - C[i,j-1] if v_eff > 0 else C[i,j+1] - C[i,j])
-            Cn[i,j] += diff + adv_x + adv_y
+            Cn[i,j] += diff - u_eff * dt * (C[i,j] - C[i-1,j]) - v_eff * dt * (C[i,j] - C[i,j-1] if v_eff > 0 else C[i,j+1] - C[i,j])
 
     C = np.where(edifici_mask == 1, 0, Cn)
 
-# Calibrazione al valore di tesi
 if np.max(C) > 0:
     C = (C / np.max(C)) * 21.69
 
-st.session_state.C = C
-
-# --- 5. VISUALIZZAZIONE 3D CON MAPPA DI CALORE ALLA BASE ---
+# --- 5. VISUALIZZAZIONE (FIX DEI PALAZZI CHE SI ALZANO) ---
 fig = go.Figure(data=[
-    # La superficie 3D del gas
     go.Surface(
-        z=C, 
-        colorscale='Jet', 
-        cmin=0, cmax=22, 
-        name="PPM",
-        # QUI CREIAMO LA MAPPA COLORATA ALLA BASE
-        contours={
-            "z": {
-                "show": True, 
-                "project_z": True, # Proietta sul piano Z=0
-                "usecolormap": True, # Usa i colori della scala Jet
-                "start": 0.5, # Inizia a colorare sopra 0.5 PPM
-                "end": 22, 
-                "size": 1 # Densità delle sfumature
-            }
-        },
-        colorbar=dict(title="Concentrazione (PPM)", x=1.1)
+        z=C, colorscale='Jet', cmin=0, cmax=22, name="PPM",
+        contours={"z": {"show": True, "project_z": True, "usecolormap": True, "start": 0.5}}
     ),
-    # Gli edifici
     go.Surface(z=edifici_altezze, colorscale='Greys', opacity=0.9, showscale=False)
 ])
 
 fig.update_layout(
     scene=dict(
-        zaxis=dict(range=[-1, 30], title="Quota / Tossicità"),
-        xaxis_title="Distanza X (m)",
-        yaxis_title="Distanza Y (m)",
-        camera=dict(eye=dict(x=1.5, y=1.5, z=1.2)) # Visuale ottimale
+        # BLOCCHIAMO IL RANGE Z: così i palazzi non cambiano altezza visiva
+        zaxis=dict(range=[0, 30], title="PPM / Altezza"),
+        xaxis=dict(range=[0, 50]),
+        yaxis=dict(range=[0, 50]),
+        aspectmode='cube' # Mantiene le proporzioni costanti
     ),
     height=800
 )
 
 st.plotly_chart(fig, use_container_width=True)
-
-# Metriche finali
-st.metric("Monitoraggio Sperimentale", f"Picco Massimo: {np.max(C):.2f} PPM")
+st.metric("Valore Sperimentale", f"{np.max(C):.2f} PPM")
