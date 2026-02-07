@@ -6,29 +6,24 @@ import plotly.graph_objects as go
 st.set_page_config(page_title="Simulatore ADR - Ingegneria Civile Ambientale", layout="wide")
 
 st.title("Sistema Integrato di Simulazione Dispersione Atmosferica")
-st.write("Analisi fluidodinamica ADR con volumetrie reali e parametri ppm calibrati.")
+st.markdown("### Analisi fluidodinamica e monitoraggio PPM - Corso di Ingegneria Civile e Ambientale")
+st.write("Modello deterministico basato su equazioni di Advezione-Diffusione-Reazione (ADR).")
 
-# --- SIDEBAR: CONTROLLO SCENARIO ---
-st.sidebar.header("🏢 Configurazione Urbanistica")
-num_palazzi = st.sidebar.slider("Numero di Palazzi", 0, 10, 6)
-dist_primo_palazzo = st.sidebar.slider("Distanza Primo Palazzo (m)", 8, 20, 12)
+# --- SIDEBAR DI CONTROLLO ---
+with st.sidebar:
+    st.header("🏢 Parametri Urbanistici")
+    num_palazzi = st.slider("Numero edifici", 0, 10, 6)
+    dist_primo = st.slider("Distanza sorgente (m)", 8, 20, 12)
+    
+    st.header("🌦️ Variabili Ambientali")
+    v_kmh = st.slider("Vento (km/h)", 1.0, 40.0, 12.0)
+    u_vento = v_kmh / 3.6 
+    k_diff = st.slider("Diffusione (K)", 0.1, 2.5, 0.8)
+    mm_pioggia = st.slider("Pioggia (mm/h)", 0, 100, 0)
 
-st.sidebar.header("⛰️ Configurazione Orografica")
-num_colline = st.sidebar.slider("Numero di Colline", 0, 5, 2)
-altezza_max_colline = st.sidebar.slider("Altezza Rilievi (m)", 2.0, 10.0, 5.0)
-
-st.sidebar.header("🌦️ Parametri Meteorologici")
-v_kmh = st.sidebar.slider("Velocità Vento (km/h)", 1.0, 40.0, 12.0)
-u_vento = v_kmh / 3.6 
-
-mm_pioggia = st.sidebar.slider("Intensità Pioggia (mm/h)", 0, 100, 0)
-k_diff = st.sidebar.slider("Diffusione Turbolenta (K)", 0.1, 2.5, 0.8)
-
-# --- LOGICA DI CALCOLO ---
-sigma_pioggia = (mm_pioggia / 100) * 0.4 
+# --- LOGICA E MAPPA ---
 dt = 0.02
-
-# --- CREAZIONE MAPPA CON ALTEZZE REALI ---
+sigma_pioggia = (mm_pioggia / 100) * 0.4 
 N = 50
 edifici_mask = np.zeros((N, N))
 edifici_altezze = np.zeros((N, N))
@@ -36,30 +31,16 @@ orografia = np.zeros((N, N))
 
 np.random.seed(42)
 if num_palazzi > 0:
-    # 1. IL PRIMO PALAZZO (Palazzo Alto: 13 metri)
-    edifici_mask[dist_primo_palazzo:dist_primo_palazzo+4, 23:27] = 1
-    edifici_altezze[dist_primo_palazzo:dist_primo_palazzo+4, 23:27] = 13.0
-    
-    # 2. ALTRI EDIFICI (Altezze miste: da 3.5m a 15m)
+    edifici_mask[dist_primo:dist_primo+4, 23:27] = 1
+    edifici_altezze[dist_primo:dist_primo+4, 23:27] = 13.0
     for _ in range(num_palazzi - 1):
         px, py = np.random.randint(15, 45), np.random.randint(10, 40)
-        h_casuale = np.random.choice([3.5, 7.0, 10.0, 15.0]) 
+        h = np.random.choice([3.5, 7.0, 10.0, 15.0]) 
         edifici_mask[px:px+3, py:py+3] = 1
-        edifici_altezze[px:px+3, py:py+3] = h_casuale
+        edifici_altezze[px:px+3, py:py+3] = h
 
-if num_colline > 0:
-    for c in range(num_colline):
-        cx = 10 if c == 0 else np.random.randint(20, 45)
-        cy = 15 if c == 0 else np.random.randint(10, 40)
-        h = altezza_max_colline * (0.6 + np.random.rand() * 0.4)
-        for i in range(N):
-            for j in range(N):
-                dist = np.sqrt((i-cx)**2 + (j-cy)**2)
-                if dist < 12:
-                    orografia[i,j] += h * np.exp(-0.07 * dist**2)
-
-# --- MOTORE DI CALCOLO ---
-if st.sidebar.button("ESEGUI ANALISI METEOROLOGICA"):
+# --- ESECUZIONE ---
+if st.sidebar.button("AVVIA SIMULAZIONE TECNICA"):
     C = np.zeros((N, N))
     mappa_box = st.empty()
     testo_box = st.empty()
@@ -67,8 +48,7 @@ if st.sidebar.button("ESEGUI ANALISI METEOROLOGICA"):
 
     for t in range(180):
         Cn = C.copy()
-        # Calibrazione per restare intorno ai tuoi 3.7 PPM
-        Cn[sx, sy] += 38 * dt 
+        Cn[sx, sy] += 38 * dt # Target ~3.7 PPM
         
         for i in range(1, N-1):
             for j in range(1, N-1):
@@ -77,28 +57,23 @@ if st.sidebar.button("ESEGUI ANALISI METEOROLOGICA"):
                 adv = -u_vento * dt * (C[i,j] - C[i-1,j])
                 reac = -sigma_pioggia * dt * C[i,j]
                 Cn[i,j] += diff + adv + reac
-
         C = np.where(edifici_mask == 1, 0, Cn)
-        C = np.clip(C, 0, 50)
         
         if t % 15 == 0:
             picco = np.max(C)
             fig = go.Figure(data=[
-                go.Surface(z=C + orografia, colorscale='Jet', cmin=0.01, cmax=8, name="Gas"),
-                go.Surface(z=edifici_altezze, colorscale='Greys', opacity=0.8, showscale=False),
-                go.Surface(z=orografia, colorscale='Greens', opacity=0.3, showscale=False)
+                go.Surface(z=C + orografia, colorscale='Jet', cmin=0.01, cmax=8, name="Concentrazione Gas"),
+                go.Surface(z=edifici_altezze, colorscale='Greys', opacity=0.8, showscale=False, name="Edifici"),
             ])
             fig.update_layout(
                 scene=dict(
-                    zaxis=dict(range=[0, 20], title="Altezza/PPM"), 
-                    xaxis_title="X (m)", yaxis_title="Y (m)"
+                    zaxis=dict(range=[0, 20], title="Quota Z (m) / Conc. (PPM)"),
+                    xaxis_title="Distanza X (m)", yaxis_title="Larghezza Y (m)"
                 ),
                 margin=dict(l=0, r=0, b=0, t=0), height=700
             )
             mappa_box.plotly_chart(fig, use_container_width=True)
-            
-            if picco > 4.5: testo_box.error(f"⚠️ LIVELLO ATTENZIONE: {picco:.2f} ppm")
-            else: testo_box.success(f"✅ QUALITÀ ARIA ACCETTABILE: {picco:.2f} ppm")
+            testo_box.info(f"Monitoraggio in tempo reale: Picco rilevato {picco:.2f} PPM")
 
-    # MESSAGGIO FINALE PERSONALIZZATO
-    st.info("Simulazione completata: Analisi dei flussi su volumetrie differenziate per il corso di Ingegneria Civile e Ambientale - Uninettuno.")
+    st.success("Analisi completata per l'Università Uninettuno - Facoltà di Ingegneria Civile e Ambientale.")
+    st.balloons()
