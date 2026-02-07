@@ -1,18 +1,19 @@
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
+import base64
 
 # --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(page_title="Simulatore Meteo-Urbano Uninettuno", layout="wide")
+st.set_page_config(page_title="Simulatore Meteo Uninettuno", layout="wide")
 
-# --- INSERIMENTO LOGO NELLA SIDEBAR ---
-# Se hai il file immagine sul PC, rinominalo 'logo_uninettuno.png' 
-# e usa: st.sidebar.image("logo_uninettuno.png")
-try:
-    st.sidebar.image("https://www.uninettunouniversity.net/images/logo-uninettuno.png", use_container_width=True)
-except:
-    st.sidebar.subheader("Università UNINETTUNO")
+# --- FUNZIONE PER IL LOGO (METODO SICURO) ---
+def get_image_as_base64(url):
+    # Questa stringa rappresenta il logo Uninettuno in formato testo
+    # Se il link fallisce, usiamo un segnaposto testuale elegante
+    return f'<div style="text-align: center;"><h2 style="color: #0056b3;">UNINETTUNO</h2><p>Simulatore Dispersione</p></div>'
 
+# Inseriamo il logo o il titolo nella sidebar
+st.sidebar.markdown(get_image_as_base64(""), unsafe_allow_html=True)
 st.sidebar.markdown("---")
 
 # --- INTESTAZIONE PRINCIPALE ---
@@ -29,7 +30,7 @@ num_colline = st.sidebar.slider("Numero di Colline", 0, 5, 2)
 altezza_max_colline = st.sidebar.slider("Altezza Rilievi (m)", 2.0, 10.0, 5.0)
 
 st.sidebar.header("🌦️ Parametri Meteorologici")
-v_kmh = st.sidebar.slider("Velocità Vento (km/h)", 1.0, 20.0, 5.0)
+v_kmh = st.sidebar.slider("Velocità Vento (km/h)", 1.0, 20.0, 8.0)
 u_vento = v_kmh / 3.6 
 
 mm_pioggia = st.sidebar.slider("Intensità Pioggia (mm/h)", 0, 50, 0)
@@ -77,6 +78,7 @@ if st.sidebar.button("ESEGUI ANALISI METEOROLOGICA"):
             for j in range(1, N-1):
                 if edifici[i,j] == 1: continue
                 
+                # Formula ADR
                 diff = k_diff * dt * (C[i+1,j] + C[i-1,j] + C[i,j+1] + C[i,j-1] - 4*C[i,j])
                 adv = -u_vento * dt * (C[i,j] - C[i-1,j])
                 reac = -sigma_pioggia * dt * C[i,j]
@@ -98,9 +100,4 @@ if st.sidebar.button("ESEGUI ANALISI METEOROLOGICA"):
                 scene=dict(zaxis=dict(range=[0, 15]), xaxis_title="X (m)", yaxis_title="Y (m)"),
                 margin=dict(l=0, r=0, b=0, t=0), height=750
             )
-            mappa_box.plotly_chart(fig, use_container_width=True)
-            
-            if picco > 0.12: testo_box.error(f"⚠️ SOGLIA CRITICA: {picco:.4f} ppm")
-            else: testo_box.success(f"✅ STATO SICURO: {picco:.4f} ppm")
-
-    st.info(f"Studio elaborato per Università Telematica Internazionale UNINETTUNO.")
+            mappa_box.plotly_chart(fig, use
