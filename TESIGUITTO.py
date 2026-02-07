@@ -101,3 +101,17 @@ if st.sidebar.button("ESEGUI ANALISI METEOROLOGICA"):
                 margin=dict(l=0, r=0, b=0, t=0), height=750
             )
             mappa_box.plotly_chart(fig, use
+
+        if t % 15 == 0:
+            picco = np.max(C) * 0.15
+            fig = go.Figure(data=[
+                go.Surface(z=C + orografia, colorscale='Jet', cmin=0.01, cmax=12, name="Gas"),
+                go.Surface(z=edifici * 4.5, colorscale='Greys', opacity=0.9, showscale=False),
+                go.Surface(z=orografia, colorscale='Greens', opacity=0.3, showscale=False)
+            ])
+            
+            fig.update_layout(
+                scene=dict(zaxis=dict(range=[0, 15]), xaxis_title="X (m)", yaxis_title="Y (m)"),
+                margin=dict(l=0, r=0, b=0, t=0), height=750
+            )
+            mappa_box.plotly_chart(fig, use
